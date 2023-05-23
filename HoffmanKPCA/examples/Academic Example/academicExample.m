@@ -11,74 +11,124 @@ addpath('../../lib')
 dyn1 = @(t,x) -x + [x(2)*sin(pi/2*x(1)); x(1)*cos(pi/2*x(2))];
 dyn2 = @(t,x) -x + [0.9*x(2)*sin(pi/5*x(1)); 0.8*x(1)*cos(pi/3*x(2))];
 n = 2; % State dimension
-tspan = 0:0.01:2; % Time span
-M = 100; % # Training trajectories
-MFaultyTest = 20; % # Faulty test trajectories 
-MNormalTest = 20; % # Normal test trajectories
+tSpan = 0:0.01:2; % Time span
+M = [50,100,150]; % # Training trajectories
+faultyTestM = 20; % # Faulty test trajectories 
+normalTestM = 20; % # Normal test trajectories
 mu = 5; % Kernel width
 N = 20; % Number of eigenvectors
-noiseStandardDeviation = 0; % Noise standard deviation
-trials = 1; % Number of repeated trials
-
+measNoiseSD = 0.01; % Standard deviation of added measurement noise
+sampNoiseRange = 0; % Range of added sampling rate noise
+trials = 100; % Number of repeated trials
+thresholdMultiplier = 2; % Threshold = max training error times this
 % Storage matrices
-falsePositives = zeros(trials,numel(M));
-falseNegatives = zeros(trials,numel(M));
-testingFaultyInitialParam = zeros(trials,MFaultyTest);
-trainingInitialParams = zeros(trials,M);
-RTest = zeros(trials,MNormalTest+MFaultyTest);
-RTrain = zeros(trials,M);
+
+normalTestInitialParams = zeros(trials,normalTestM,numel(M));
+faultyTestInitialParams = zeros(trials,faultyTestM,numel(M));
+RTest = zeros(normalTestM+faultyTestM,trials,numel(M));
+if numel(M)==1
+    RTrain = zeros(M,trials);
+    trainInitialParams = zeros(trials,M);
+else
+    RTrain = cell(numel(M),1);
+    trainInitialParams = cell(numel(M),1);
+    for ii=1:numel(M)
+        RTrain{ii,1} = zeros(M(ii),trials);
+        trainInitialParams{ii,1} = zeros(trials,M(ii));
+    end
+end
 
 %% Monte-carlo trials
+for ii=1:numel(M)
 for trial = 1:trials
     % Training data
-    trainingInitialParam = 2*pi*rand(1,M);
-    trainingX0 = [sin(trainingInitialParam);cos(trainingInitialParam)];
+    trainInitialParam = 2*pi*rand(1,M(ii));
+    trainX0 = [sin(trainInitialParam);cos(trainInitialParam)];
     % Generate training data
-    trainingPaths = zeros(length(trainingX0),n*length(tspan));
-    for i = 1:length(trainingX0)
-        [~,temp] = ode45(dyn1,tspan,trainingX0(:,i));
+    trainPaths = zeros(length(trainX0),n*length(tSpan));
+    for i = 1:length(trainX0)
+        noisytSpan = tSpan + sampNoiseRange*2*(rand(size(tSpan))-0.5);
+        [~,temp] = ode45(dyn1,noisytSpan,trainX0(:,i));
         temp = temp.';
-        trainingPaths(i,:)=temp(:)';
+        trainPaths(i,:)=temp(:)';
     end
-    trainingPaths = trainingPaths + noiseStandardDeviation*randn(size(trainingPaths));
+    trainPaths = trainPaths + measNoiseSD*randn(size(trainPaths));
     
     % Faulty test data
-    testingFaultyInitialParam = 2*pi*rand(1,MFaultyTest);
-    testingFaultyX0 = [sin(testingFaultyInitialParam);cos(testingFaultyInitialParam)];
+    faultyTestInitialParam = 2*pi*rand(1,faultyTestM);
+    faultyTestX0 = [sin(faultyTestInitialParam);cos(faultyTestInitialParam)];
     % Generate faulty test data
-    testingFaultyPaths = zeros(length(testingFaultyX0),n*length(tspan));
-    for i = 1:length(testingFaultyX0)
-        [~,temp] = ode45(dyn2,tspan,testingFaultyX0(:,i));
+    faultyTestPaths = zeros(length(faultyTestX0),n*length(tSpan));
+    for i = 1:length(faultyTestX0)
+        noisytSpan = tSpan + sampNoiseRange*2*(rand(size(tSpan))-0.5);
+        [~,temp] = ode45(dyn2,noisytSpan,faultyTestX0(:,i));
         temp = temp.';
-        testingFaultyPaths(i,:)=temp(:)';
+        faultyTestPaths(i,:)=temp(:)';
     end
-    testingFaultyPaths = testingFaultyPaths + noiseStandardDeviation*randn(size(testingFaultyPaths));
+    faultyTestPaths = faultyTestPaths + measNoiseSD*randn(size(faultyTestPaths));
     
     % Normal test data
-    testingNormalInitialParam = 2*pi*rand(1,MNormalTest);
-    testingNormalX0 = [sin(testingNormalInitialParam);cos(testingNormalInitialParam)];
+    normalTestInitialParam = 2*pi*rand(1,normalTestM);
+    normalTestX0 = [sin(normalTestInitialParam);cos(normalTestInitialParam)];
     % Generate Normal test data
-    testingNormalPaths = zeros(length(testingNormalX0),n*length(tspan));
-    for i = 1:length(testingNormalX0)
-        [~,temp] = ode45(dyn1,tspan,testingNormalX0(:,i));
+    normalTestPaths = zeros(length(normalTestX0),n*length(tSpan));
+    for i = 1:length(normalTestX0)
+        noisytSpan = tSpan + sampNoiseRange*2*(rand(size(tSpan))-0.5);
+        [~,temp] = ode45(dyn1,noisytSpan,normalTestX0(:,i));
         temp = temp.';
-        testingNormalPaths(i,:)=temp(:)';
+        normalTestPaths(i,:)=temp(:)';
     end
-    testingNormalPaths = testingNormalPaths + noiseStandardDeviation*randn(size(testingNormalPaths));
+    normalTestPaths = normalTestPaths + measNoiseSD*randn(size(normalTestPaths));
 
-    trainingInitialParams(trial,:) = trainingInitialParam;
-    testingFaultyInitialParam(trial,:) = testingFaultyInitialParam;
-    testingNormalInitialParam(trial,:) = testingNormalInitialParam;
+    if numel(M) == 1
+        trainInitialParams(trial,:) = trainInitialParam;
+    else
+        trainInitialParams{ii}(trial,:) = trainInitialParam;
+    end
+    faultyTestInitialParams(trial,:) = faultyTestInitialParam;
+    normalTestInitialParams(trial,:) = normalTestInitialParam;
     
     % KPCA
-    [rtrain,rtest] = kpcabound(trainingPaths,mu,N,[testingNormalPaths;testingFaultyPaths]);
-    RTrain(trial,:) = rtrain;
-    RTest(trial,:) = rtest;
-    epsilon = 2*max(rtrain);
-    falsePositives(trial,1) = nnz(rtest(1:MNormalTest) > epsilon);
-    falseNegatives(trial,1) = nnz(rtest(MNormalTest+1:end) < epsilon);
+    [rtrain,rtest] = kpcabound(trainPaths,mu,N,[normalTestPaths;faultyTestPaths]);
+    
+    % Store reconstruction errors
+    RTest(:,trial,ii) = rtest;
+    if numel(M) == 1
+        RTrain(:,trial) = rtrain;
+    else
+        RTrain{ii}(:,trial) = rtrain;
+    end
 end
-scatter(1:MNormalTest,log(RTest(1,1:MNormalTest)),'b','filled')
-hold on
-scatter(1:MNormalTest,log(RTest(1,MNormalTest+1:MNormalTest+MFaultyTest)),'r','filled')
-line([1,20],log([2*max(RTrain(1,:)),2*max(RTrain(1,:))]),'color','g','linewidth',2)
+end
+%% Fault detection
+if numel(M) == 1
+    % Threshold for fault detection for each trial
+    epsilon = thresholdMultiplier*max(RTrain);
+else
+    epsilon = zeros(1,trials,numel(M));
+    for ii=1:numel(M)
+        epsilon(1,:,ii) = thresholdMultiplier*max(RTrain{ii});
+    end
+end
+
+% Total false positives per trial
+falsePositives = sum(RTest(1:normalTestM,:,:) > epsilon);
+
+% Total false negatives per trial
+falseNegatives = sum(RTest(normalTestM+1:normalTestM+faultyTestM,:,:) < epsilon);
+
+% Mixed points over per trial
+mixedPoints = sum(RTest(normalTestM+1:normalTestM+faultyTestM,:,:) < max(RTest(1:normalTestM,:,:)))...
+    + sum(RTest(1:normalTestM,:,:) > min(RTest(normalTestM+1:normalTestM+faultyTestM,:,:)));
+
+disp(['False positive percentage = ' num2str(sum(falsePositives)*100/(trials*(normalTestM+faultyTestM)))])
+disp(['False negative percentage = ' num2str(sum(falseNegatives)*100/(trials*(normalTestM+faultyTestM)))])
+disp(['Mixing percentage = ' num2str(sum(mixedPoints)*100/(trials*(normalTestM+faultyTestM)))])
+
+%% Plots
+if numel(M) == 1
+    scatter(1:normalTestM,log(RTest(1,1:normalTestM)),'b','filled')
+    hold on
+    scatter(1:normalTestM,log(RTest(1,normalTestM+1:normalTestM+faultyTestM)),'r','filled')
+    line([1,20],log([2*max(RTrain(1,:)),2*max(RTrain(1,:))]),'color','g','linewidth',2)
+end
